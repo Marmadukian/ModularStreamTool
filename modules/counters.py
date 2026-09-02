@@ -1,3 +1,5 @@
+import json
+
 from utils import (
     OVERLAY_THEMES, escape, quote, get_param,
     html_response, json_response, read_json, write_json,
@@ -45,42 +47,48 @@ def save_messages(data): write_json(MESSAGES_FILE, data)
 
 def handle_common_commands(params):
     action = get_param(params, "action")
-    if not action:
+    name = get_param(params, "name")
+    if not name or not action:
         return
 
-    name = get_param(params, "name")
     counters = load_counters()
 
-    if action == "inc" and name:
-        amt = int(get_param(params, "amt", "1"))
-        counters[name] = max(0, counters.get(name, 0) + amt)
+    if action == "inc":
+        try:
+            amt = int(get_param(params, "amt", "1"))
+        except ValueError:
+            amt = 1
+        counters[name] = counters.get(name, 0) + amt
         save_counters(counters)
-    elif action == "dec" and name:
-        amt = int(get_param(params, "amt", "1"))
+
+    elif action == "dec":
+        try:
+            amt = int(get_param(params, "amt", "1"))
+        except ValueError:
+            amt = 1
         counters[name] = max(0, counters.get(name, 0) - amt)
         save_counters(counters)
-    elif action == "set" and name:
-        val = int(get_param(params, "val", "0"))
-        counters[name] = max(0, val)
+
+    elif action == "set":
+        raw_val = get_param(params, "amt", "")
+        if raw_val == "":
+            raw_val = get_param(params, "val", "0")
+        try:
+            counters[name] = int(raw_val)
+        except ValueError:
+            counters[name] = 0
         save_counters(counters)
-    elif action == "delete" and name in counters:
-        del counters[name]
-        save_counters(counters)
-    elif action == "rename" and name in counters:
-        new_name = get_param(params, "new_name").strip()
-        if new_name:
+
+    elif action == "delete":
+        if name in counters:
+            del counters[name]
+            save_counters(counters)
+
+    elif action == "rename":
+        new_name = get_param(params, "new_name")
+        if new_name and new_name != name and name in counters:
             counters[new_name] = counters.pop(name)
             save_counters(counters)
-    elif action == "bulk_set":
-        bulk = get_param(params, "bulk_data")
-        for item in bulk.replace("\n", ",").split(","):
-            if not item.strip(): continue
-            parts = item.strip().rsplit(" ", 1)
-            if len(parts) == 2 and parts[1].isdigit():
-                counters[parts[0].strip()] = int(parts[1])
-            else:
-                counters[item.strip()] = counters.get(item.strip(), 0)
-        save_counters(counters)
 
     # Message actions
     msg_label = get_param(params, "msg_label")
@@ -118,6 +126,7 @@ def render_dashboard_widget(params):
 
     grid = "".join(
         counter_cards) if counter_cards else '<div class="col-span-full text-slate-500 text-xs py-4 text-center">No counters active.</div>'
+
     return f"""
     <div class="bg-slate-950/60 border border-slate-800 rounded-2xl p-5 space-y-4">
         <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -125,13 +134,24 @@ def render_dashboard_widget(params):
                 Counters
                 <a href="/obs/counter_display" target="_blank" class="text-[10px] text-slate-400 hover:text-emerald-300 font-mono">(+ obs link)</a>
             </h2>
+            <button type="button" onclick="document.getElementById('counter-add-form').classList.toggle('hidden'); document.getElementById('new-counter-name').focus();" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition">
+                + Add Counter
+            </button>
         </div>
+
+        <!-- Inline Quick-Add Form -->
+        <form id="counter-add-form" action="/" method="GET" class="hidden flex gap-2 p-2 bg-slate-900 border border-slate-800 rounded-xl">
+            <input type="hidden" name="action" value="set" />
+            <input type="text" id="new-counter-name" name="name" placeholder="Counter name..." class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono" required />
+            <input type="number" name="amt" value="0" class="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs text-white text-center font-mono focus:outline-none focus:border-emerald-500" />
+            <button type="submit" class="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold">Save</button>
+        </form>
+
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
             {grid}
         </div>
     </div>
     """
-
 
 def render_remote_widget(params):
     counters = load_counters()
@@ -158,32 +178,42 @@ def render_remote_widget(params):
 
 # --- Dedicated Endpoints (OBS & Polling) ---
 def handle_obs_overlay(params):
-    theme_key = get_param(params, "theme")
-    target_name = get_param(params, "name")
-    is_api = get_param(params, "api") == "1"
+    theme_key = get_param(params, "theme", "emerald_green")
+    counter_name = get_param(params, "name", "")
     counters = load_counters()
 
-    if is_api and target_name:
-        return json_response(
-            {"name": target_name, "count": counters.get(target_name, 0)}
-        )
+    # If no specific counter is requested, show picker so OBS isn't totally blank
+    if not counter_name:
+        if "theme" not in params:
+            return html_response(render_theme_picker("/obs/counter_display", "Select Counter Theme", "emerald"))
+        return html_response(render_item_picker("/obs/counter_display", theme_key, counters, "Counter"))
 
-    html = ""
+    # Initial server-side rendered value
+    initial_count = counters.get(counter_name, 0)
 
-    if theme_key in OVERLAY_THEMES and target_name:
-        qname = quote(target_name)
-        current_val = counters.get(target_name, 0)
+    inner_html = f"""
+    <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 0 16px;">
+        <span class="obs-label" style="font-size: 14px; letter-spacing: 0.05em;">{escape(counter_name)}</span>
+        <span class="obs-val" id="count-val" style="font-size: 28px;">{initial_count}</span>
+    </div>
+    """
 
-        html = render_obs_overlay(
-            title=f"Counter - {target_name}",
-            theme_key=theme_key,
-            inner_html=f"""
-            <span class="obs-label text-xl truncate ml-5">{escape(target_name)}</span>
-            <span class="obs-val text-3xl mr-5 ml-auto" id="display-val">{current_val}</span>
-        """,
-            poll_endpoint=f"/obs/counter_display?api=1&name={qname}",
-            poll_js="document.getElementById('display-val').innerText = data.count;",
-        )
+    poll_js = f"""
+    const targetName = {json.dumps(counter_name)};
+    if (data && data[targetName] !== undefined) {{
+        document.getElementById('count-val').innerText = data[targetName];
+    }}
+    """
+
+    html = render_obs_overlay(
+        title=f"Counter - {counter_name}",
+        theme_key=theme_key,
+        inner_html=inner_html,
+        poll_endpoint="/api/counters",
+        poll_interval_ms=400,
+        poll_js=poll_js
+    )
+
     return html_response(html)
 
 def handle_chat_command(user: str, command: str, args: str, tags: dict):

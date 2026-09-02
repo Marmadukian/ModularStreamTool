@@ -7,8 +7,23 @@ import urllib.parse
 from pathlib import Path
 from twitch_listener import TwitchListener
 
+
 import modules
-from utils import read_json, write_json, render_page, get_data_path, get_param, html_response
+from utils import (
+    BASE_DIR,
+    read_json,
+    write_json,
+    escape,
+    quote,
+    get_param,
+    json_response,
+    html_response,
+    render_obs_overlay,
+    render_theme_picker,
+    OVERLAY_THEMES,
+    render_page,
+    get_data_path,
+)
 
 PORT = 5000
 CONFIG_FILE = get_data_path("config.json")
@@ -89,30 +104,202 @@ def handle_dashboard(params):
 
     # Pass command modifications down to active modules
     scripts = []
-    widgets_html = []
+    widgets_dict = {}
 
     for mod_id in list(ACTIVE_MODULE_IDS):
         mod = MODULE_REGISTRY.get(mod_id)
-        if not mod: continue
+        if not mod:
+            continue
 
         if hasattr(mod, "handle_common_commands"):
             mod.handle_common_commands(params)
         if hasattr(mod, "SHARED_JS"):
             scripts.extend(mod.SHARED_JS)
         if hasattr(mod, "render_dashboard_widget"):
-            widgets_html.append(mod.render_dashboard_widget(params))
+            rendered = mod.render_dashboard_widget(params)
+
+            # Neutralize nested background/border so the outer shell owns the corners
+            cleaned_rendered = rendered.replace(
+                "bg-slate-950/60 border border-slate-800 rounded-2xl p-5",
+                "p-5"
+            )
+
+            # Unified continuous corner shell with flush top knurled handle
+            wrapped_widget = f"""
+            <div class="dashboard-widget group relative transition-all duration-150 ease-out rounded-2xl overflow-hidden border border-slate-800 bg-slate-950/60 shadow-lg hover:border-slate-700" 
+                 draggable="true" 
+                 data-mod-id="{mod_id}">
+                <div class="drag-handle w-full h-3.5 bg-slate-900/90 hover:bg-slate-800/90 border-b border-slate-800/80 cursor-grab active:cursor-grabbing flex items-center justify-center transition select-none">
+                    <div class="w-24 h-1 opacity-25 group-hover:opacity-75 transition" 
+                         style="background-image: radial-gradient(circle, #94a3b8 1px, transparent 1px); background-size: 5px 5px;"></div>
+                </div>
+                {cleaned_rendered}
+            </div>
+            """
+            widgets_dict[mod_id] = wrapped_widget
+
+    # Distribute initially alternating across two columns
+    col0_html = []
+    col1_html = []
+    for idx, (m_id, w_html) in enumerate(widgets_dict.items()):
+        if idx % 2 == 0:
+            col0_html.append(w_html)
+        else:
+            col1_html.append(w_html)
+
+    if widgets_dict:
+        widget_content = f"""
+        <div id="dashboard-columns" class="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+            <div id="dash-col-0" class="dash-col flex flex-col gap-6 min-h-[120px]" data-col="0">
+                {''.join(col0_html)}
+            </div>
+            <div id="dash-col-1" class="dash-col flex flex-col gap-6 min-h-[120px]" data-col="1">
+                {''.join(col1_html)}
+            </div>
+        </div>
+        """
+    else:
+        widget_content = '<div class="text-slate-500 py-12 text-center">No active modules enabled.</div>'
+
+    dnd_script = """
+    document.addEventListener('DOMContentLoaded', () => {
+        const col0 = document.getElementById('dash-col-0');
+        const col1 = document.getElementById('dash-col-1');
+        if (!col0 || !col1) return;
+
+        const STORAGE_KEY = 'dashboard_col_layout_v2';
+
+        function restoreLayout() {
+            try {
+                const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+                if (saved && (Array.isArray(saved.col0) || Array.isArray(saved.col1))) {
+                    const allCards = Array.from(document.querySelectorAll('.dashboard-widget'));
+                    const cardMap = new Map(allCards.map(el => [el.getAttribute('data-mod-id'), el]));
+
+                    col0.innerHTML = '';
+                    col1.innerHTML = '';
+
+                    (saved.col0 || []).forEach(id => {
+                        if (cardMap.has(id)) {
+                            col0.appendChild(cardMap.get(id));
+                            cardMap.delete(id);
+                        }
+                    });
+
+                    (saved.col1 || []).forEach(id => {
+                        if (cardMap.has(id)) {
+                            col1.appendChild(cardMap.get(id));
+                            cardMap.delete(id);
+                        }
+                    });
+
+                    cardMap.forEach(el => {
+                        if (col0.children.length <= col1.children.length) {
+                            col0.appendChild(el);
+                        } else {
+                            col1.appendChild(el);
+                        }
+                    });
+                }
+            } catch (e) {}
+        }
+
+        function saveLayout() {
+            const getIds = (col) => Array.from(col.querySelectorAll('.dashboard-widget'))
+                                        .map(el => el.getAttribute('data-mod-id'))
+                                        .filter(Boolean);
+
+            const state = {
+                col0: getIds(col0),
+                col1: getIds(col1)
+            };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        }
+
+        restoreLayout();
+
+        let draggedItem = null;
+
+        document.querySelectorAll('.dash-col').forEach(col => {
+            col.addEventListener('dragstart', (e) => {
+                const target = e.target.closest('.dashboard-widget');
+                if (!target) return;
+                draggedItem = target;
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', target.getAttribute('data-mod-id'));
+
+                setTimeout(() => {
+                    target.classList.add('opacity-30', 'scale-[0.99]');
+                }, 0);
+            });
+
+            col.addEventListener('dragend', (e) => {
+                const target = e.target.closest('.dashboard-widget');
+                if (target) {
+                    target.classList.remove('opacity-30', 'scale-[0.99]');
+                }
+                draggedItem = null;
+                document.querySelectorAll('.dash-col').forEach(c => {
+                    c.classList.remove('bg-indigo-950/20', 'rounded-2xl');
+                });
+                saveLayout();
+            });
+
+            col.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+
+                if (!draggedItem) return;
+
+                const afterElement = getDragAfterElement(col, e.clientY);
+                if (afterElement == null) {
+                    col.appendChild(draggedItem);
+                } else {
+                    col.insertBefore(draggedItem, afterElement);
+                }
+            });
+
+            col.addEventListener('dragenter', (e) => {
+                col.classList.add('bg-indigo-950/20', 'rounded-2xl');
+            });
+
+            col.addEventListener('dragleave', (e) => {
+                if (!col.contains(e.relatedTarget)) {
+                    col.classList.remove('bg-indigo-950/20', 'rounded-2xl');
+                }
+            });
+        });
+
+        function getDragAfterElement(container, y) {
+            const draggableElements = [...container.querySelectorAll('.dashboard-widget:not(.opacity-30)')];
+
+            return draggableElements.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                    return { offset: offset, element: child };
+                } else {
+                    return closest;
+                }
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
+    });
+    """
+
+    scripts.append(dnd_script)
 
     page_body = f"""
-    <header class="flex items-center justify-between border-b border-slate-800 pb-5">
-        <h1 class="text-xl font-black text-white uppercase tracking-wider flex items-center gap-2">
-            <span class="w-3 h-3 rounded-full bg-emerald-500"></span> Control Dashboard
-        </h1>
-        <a href="/" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2 text-xs font-bold rounded-lg border border-slate-700">⟳ Refresh</a>
-    </header>
-    {render_toggle_menu()}
-    <main class="space-y-6">
-        {''.join(widgets_html) if widgets_html else '<div class="text-slate-500 py-12 text-center">No active modules enabled.</div>'}
-    </main>
+    <div class="space-y-6">
+        <header class="flex items-center justify-between border-b border-slate-800 pb-5">
+            <h1 class="text-xl font-black text-white uppercase tracking-wider flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full bg-emerald-500"></span> Control Dashboard
+            </h1>
+            <a href="/" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2 text-xs font-bold rounded-lg border border-slate-700">⟳ Refresh</a>
+        </header>
+        {render_toggle_menu()}
+        {widget_content}
+        <div class="h-36 w-full shrink-0"></div>
+    </div>
     """
     return html_response(render_page("Dashboard", page_body, scripts))
 
@@ -226,9 +413,17 @@ if __name__ == "__main__":
     active_routes = get_active_routes()
     if active_routes:
         print("\n  [Module Routes & OBS Overlays]")
+        obs_endpoints = []
         for route in sorted(active_routes.keys()):
-            prefix = "[API]" if "/api/" in route else "[OBS]" if "/obs/" in route else "     "
+            prefix = "[API]" if "/api/" in route else "[OBS]" if "/obs/" in route else " [VR]" if "/vr/" in route else "     "
+            if "/api/" in route:
+                continue
+            if "/obs/" in route:
+                obs_endpoints.append(f"    {prefix} http://localhost:{PORT}{route}")
+                continue
             print(f"    {prefix} http://localhost:{PORT}{route}")
+        for end in obs_endpoints:
+            print(end)
 
     print("=====================================================")
     print("[*] Press Ctrl+C to stop.")

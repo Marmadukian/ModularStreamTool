@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import html
+import re
 import urllib.parse
 
 # --- 1. Base Directory Handling ---
@@ -13,9 +14,90 @@ else:
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# --- 1a. Energy levels ---
+
+ENERGY_PROFILES = {
+    "mp": {
+        "key": "mp",
+        "label": "Low Mind / Low Body",
+        "short_desc": "Passive recovery, tidy, gentle reset",
+        "badge_css": "bg-slate-800 text-slate-300 border-slate-700",
+        "accent_hex": "#64748b",
+        "mental_high": False,
+        "physical_high": False,
+    },
+    "mP": {
+        "key": "mP",
+        "label": "Low Mind / HIGH Body",
+        "short_desc": "Manual chores, walking, heavy movement",
+        "badge_css": "bg-amber-950/80 text-amber-300 border-amber-800",
+        "accent_hex": "#f59e0b",
+        "mental_high": False,
+        "physical_high": True,
+    },
+    "Mp": {
+        "key": "Mp",
+        "label": "HIGH Mind / Low Body",
+        "short_desc": "Code, bills, deep writing, spreadsheet logic",
+        "badge_css": "bg-indigo-950/80 text-indigo-300 border-indigo-800",
+        "accent_hex": "#6366f1",
+        "mental_high": True,
+        "physical_high": False,
+    },
+    "MP": {
+        "key": "MP",
+        "label": "HIGH Mind / HIGH Body",
+        "short_desc": "Peak executive function, teardown, full overhaul",
+        "badge_css": "bg-rose-950/80 text-rose-300 border-rose-800",
+        "accent_hex": "#ef4444",
+        "mental_high": True,
+        "physical_high": True,
+    },
+}
+
+DEFAULT_ENERGY = "mp"
+
+
+def normalize_energy_key(raw_key: str) -> str:
+    """Normalizes input strings into valid 'mp', 'mP', 'Mp', or 'MP' keys."""
+    if not raw_key:
+        return DEFAULT_ENERGY
+
+    clean = raw_key.strip()
+    if clean in ENERGY_PROFILES:
+        return clean
+
+    lower = clean.lower()
+    if lower == "mp":
+        m = "M" if len(clean) > 0 and clean[0] == "M" else "m"
+        p = "P" if len(clean) > 1 and clean[1] == "P" else "p"
+        reconstructed = f"{m}{p}"
+        return reconstructed if reconstructed in ENERGY_PROFILES else DEFAULT_ENERGY
+
+    return DEFAULT_ENERGY
+
+
+def get_energy_profile(key: str) -> dict:
+    """Returns the full metadata dictionary for an energy profile."""
+    normalized = normalize_energy_key(key)
+    return ENERGY_PROFILES.get(normalized, ENERGY_PROFILES[DEFAULT_ENERGY])
+
+
+def render_energy_badge(key: str, extra_classes: str = "") -> str:
+    """Returns an HTML badge component for display in tables, cards, and stream feeds."""
+    prof = get_energy_profile(key)
+    return (
+        f'<span class="px-2 py-0.5 text-xs font-mono font-bold rounded-lg border'
+        f' {prof["badge_css"]} {extra_classes}"'
+        f' title="{escape(prof["label"])}: {escape(prof["short_desc"])}">'
+        f"{prof['key']}</span>"
+    )
+
+
 # --- 2. Persistence Helpers ---
 def get_data_path(filename: str) -> str:
     return os.path.join(DATA_DIR, filename)
+
 
 def read_json(filepath: str, default=None):
     if default is None:
@@ -28,6 +110,7 @@ def read_json(filepath: str, default=None):
     except (json.JSONDecodeError, OSError):
         return default
 
+
 def write_json(filepath: str, data) -> None:
     try:
         with open(filepath, "w", encoding="utf-8") as f:
@@ -35,18 +118,26 @@ def write_json(filepath: str, data) -> None:
     except OSError as e:
         print(f"[Error] Writing {filepath}: {e}")
 
+
 # --- 3. HTTP & Template Helpers ---
 def json_response(data: dict or list, status: int = 200):
     return json.dumps(data), ("Content-Type", "application/json")
 
-def html_response(html_str: str, status: int = 200):
+
+def html_response(html_str: str, status: int = 200, with_rapid_log: bool = True):
+    # Never inject into transparent OBS browser sources
+    if with_rapid_log and "/obs/" not in html_str:
+        html_str = inject_rapid_log(html_str)
     return html_str, ("Content-Type", "text/html")
+
 
 def escape(val) -> str:
     return html.escape(str(val))
 
+
 def quote(val) -> str:
     return urllib.parse.quote_plus(str(val))
+
 
 def get_param(params: dict, key: str, default: str = "") -> str:
     if not isinstance(params, dict):
@@ -54,9 +145,64 @@ def get_param(params: dict, key: str, default: str = "") -> str:
     val = params.get(key, [default])
     return val[0] if isinstance(val, list) and val else default
 
-def render_page(title: str, body_content: str, scripts: list = None) -> str:
-    """Standard dashboard layout shell with Tailwind."""
+
+# --- 3a. Universal Rapid Log Injector ---
+PAGE_HEADER_HOOK = None
+
+
+def set_page_header_hook(fn):
+    """Allows rapid_log to register its bar without circular imports."""
+    global PAGE_HEADER_HOOK
+    PAGE_HEADER_HOOK = fn
+
+
+def inject_rapid_log(html_str: str) -> str:
+    """Injects top rapid bar AND the 2x2 bottom navigation bar into any page."""
+    if not html_str:
+        return html_str
+
+    top_bar = PAGE_HEADER_HOOK() if PAGE_HEADER_HOOK else ""
+    bottom_nav = render_bottom_navigation()
+
+    # Place top bar right after <body ...>
+    if re.search(r'<body[^>]*>', html_str, flags=re.IGNORECASE):
+        html_str = re.sub(
+            r'(<body[^>]*>)',
+            r'\1' + top_bar,
+            html_str,
+            count=1,
+            flags=re.IGNORECASE
+        )
+    else:
+        html_str = top_bar + html_str
+
+    # Place bottom nav right before </body> (or at the very end)
+    if re.search(r'</body>', html_str, flags=re.IGNORECASE):
+        html_str = re.sub(
+            r'(</body>)',
+            bottom_nav + r'\1',
+            html_str,
+            count=1,
+            flags=re.IGNORECASE
+        )
+    else:
+        html_str += bottom_nav
+
+    return html_str
+
+
+def render_page(
+    title: str,
+    body_content: str,
+    scripts: list = None,
+    include_header: bool = True,
+) -> str:
     scripts_html = "\n".join([f"<script>{s}</script>" for s in (scripts or [])])
+    header_html = (
+        PAGE_HEADER_HOOK() if (include_header and PAGE_HEADER_HOOK) else ""
+    )
+    bottom_nav = render_bottom_navigation() if include_header else ""
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -68,13 +214,20 @@ def render_page(title: str, body_content: str, scripts: list = None) -> str:
         body {{ background: #0b0f19; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
         input[type=number]::-webkit-inner-spin-button, 
         input[type=number]::-webkit-outer-spin-button {{ -webkit-appearance: none; margin: 0; }}
+        ::-webkit-scrollbar {{ width: 6px; height: 6px; }}
+        ::-webkit-scrollbar-thumb {{ background: #1e293b; border-radius: 4px; }}
     </style>
     {scripts_html}
 </head>
-<body class="p-6 max-w-7xl mx-auto space-y-8 pb-24">
-    {body_content}
+<body class="min-h-screen">
+    {header_html}
+    <main class="p-4 md:p-6 max-w-7xl mx-auto space-y-8 pb-36">
+        {body_content}
+    </main>
+    {bottom_nav}
 </body>
 </html>"""
+
 
 def render_theme_picker(base_route: str, title: str = "Select Overlay Theme", accent_color: str = "emerald") -> str:
     """Step 1: Renders the categorized color palette selection grid."""
@@ -140,7 +293,8 @@ def render_item_picker(base_route: str, theme_key: str, items: dict, item_type_l
         </a>
         """)
 
-    items_html = "".join(links) if links else f'<div class="text-slate-500 text-xs italic p-4 text-center">No {item_type_label.lower()}s available.</div>'
+    items_html = "".join(
+        links) if links else f'<div class="text-slate-500 text-xs italic p-4 text-center">No {item_type_label.lower()}s available.</div>'
 
     return f"""<!DOCTYPE html>
 <html>
@@ -166,14 +320,15 @@ def render_item_picker(base_route: str, theme_key: str, items: dict, item_type_l
 </body>
 </html>"""
 
+
 def render_obs_overlay(
-    title: str,
-    theme_key: str,
-    inner_html: str,
-    custom_css: str = "",
-    poll_endpoint: str = "",
-    poll_interval_ms: int = 500,
-    poll_js: str = "",
+        title: str,
+        theme_key: str,
+        inner_html: str,
+        custom_css: str = "",
+        poll_endpoint: str = "",
+        poll_interval_ms: int = 500,
+        poll_js: str = "",
 ) -> str:
     """Standardized full-bleed OBS browser source wrapper."""
     theme = OVERLAY_THEMES.get(theme_key, OVERLAY_THEMES["slate_grey"])
@@ -184,7 +339,6 @@ def render_obs_overlay(
         "none" if theme["glow"] == "none" else f"0 0 12px {theme['glow']}"
     )
 
-    # Optional default polling JS block
     script_block = ""
     if poll_endpoint and poll_js:
         script_block = f"""
@@ -199,6 +353,7 @@ def render_obs_overlay(
             }}
             setInterval(updateOverlay, {poll_interval_ms});
             updateOverlay();
+
         </script>
         """
 
@@ -254,6 +409,91 @@ def render_obs_overlay(
     </div>
 </body>
 </html>"""
+
+
+def render_bottom_navigation() -> str:
+    """Renders a 2x2 floating quad bottom navigation bar with dual-confirmation wipe."""
+    return """
+    <!-- Bottom 4-Option Square Grid with safe bottom spacing -->
+    <nav class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 w-full max-w-sm px-4">
+        <div class="bg-slate-950/95 backdrop-blur-md border border-slate-800 rounded-2xl p-1.5 shadow-2xl grid grid-cols-2 gap-1.5 font-mono text-[11px]">
+            <a href="/bujo/review" class="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-slate-900/90 hover:bg-slate-800 border border-slate-800/80 rounded-xl text-slate-300 hover:text-white transition">
+                <span>🌙</span>
+                <span class="font-bold uppercase tracking-wider">End of Day</span>
+            </a>
+
+            <a href="/vault" class="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-slate-900/90 hover:bg-slate-800 border border-slate-800/80 rounded-xl text-slate-300 hover:text-white transition">
+                <span>📁</span>
+                <span class="font-bold uppercase tracking-wider">Vault</span>
+            </a>
+
+            <a href="/vault/blocked" class="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-slate-900/90 hover:bg-slate-800 border border-slate-800/80 rounded-xl text-slate-400 hover:text-slate-200 transition">
+                <span>🛑</span>
+                <span class="font-bold uppercase tracking-wider">Triage</span>
+            </a>
+
+            <button id="btn-slate-wipe" onclick="initiateSlateWipe()" class="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-slate-900/90 hover:bg-rose-950/40 border border-slate-800/80 hover:border-rose-900/60 rounded-xl text-slate-500 hover:text-rose-400 transition">
+                <span>🧹</span>
+                <span id="wipe-label" class="font-bold uppercase tracking-wider">Wipe Slate</span>
+            </button>
+        </div>
+    </nav>
+
+    <script>
+        let wipeStep = 0;
+        let wipeResetTimeout = null;
+
+        async function initiateSlateWipe() {
+            const btn = document.getElementById('btn-slate-wipe');
+            const label = document.getElementById('wipe-label');
+
+            if (wipeStep === 0) {
+                // Tap 1: Visual primed state
+                wipeStep = 1;
+                btn.className = "flex items-center justify-center gap-1.5 py-2.5 px-3 bg-amber-950/80 border border-amber-700 rounded-xl text-amber-300 transition animate-pulse";
+                label.innerText = "Tap Again?";
+
+                wipeResetTimeout = setTimeout(() => {
+                    resetWipeButton();
+                }, 4000);
+            } else if (wipeStep === 1) {
+                // Tap 2: Final Confirmation Modal / Alert
+                clearTimeout(wipeResetTimeout);
+                resetWipeButton();
+
+                const confirmed = confirm(
+                    "Wipe the slate completely clean?\\n\\n" +
+                    "• All active tasks across all Areas & Projects will be swept into stale archives.\\n" +
+                    "• Nothing is deleted—all tasks can be retrieved from stale.json if needed.\\n" +
+                    "• Your current board will become 100% clear for a fresh start."
+                );
+
+                if (confirmed) {
+                    try {
+                        const res = await fetch('/api/vault/action?action=wipe_slate_clean');
+                        const data = await res.json();
+                        alert(`Slate wiped clean. ${data.swept_total || 0} tasks archived. Take a breath.`);
+                        window.location.reload();
+                    } catch (e) {
+                        alert("Failed to wipe slate: " + e);
+                    }
+                }
+            }
+        }
+
+        function resetWipeButton() {
+            wipeStep = 0;
+            const btn = document.getElementById('btn-slate-wipe');
+            const label = document.getElementById('wipe-label');
+            if (btn && label) {
+                btn.className = "flex items-center justify-center gap-1.5 py-2.5 px-3 bg-slate-900/90 hover:bg-rose-950/40 border border-slate-800/80 hover:border-rose-900/60 rounded-xl text-slate-500 hover:text-rose-400 transition";
+                label.innerText = "Wipe Slate";
+            }
+        }
+    </script>
+    """
+
+
 
 
 # --- 4. Centralized OBS Overlay Theme Palette ---
