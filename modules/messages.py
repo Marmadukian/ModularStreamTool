@@ -293,7 +293,7 @@ def handle_text_overlay(params):
     </div>
 </body>
 </html>"""
-        return html_response(html)
+        return html_response(html, with_rapid_log=False)
 
     # Stage 2: Pick Static Text Item
     if theme_key in OVERLAY_THEMES:
@@ -309,7 +309,7 @@ def handle_text_overlay(params):
         base_route="/obs/text_display",
         title="Select Text Overlay Theme",
         accent_color="indigo"
-    ))
+    ), with_rapid_log=False)
 
 ROUTES = {
     "/obs/text_display": handle_text_overlay

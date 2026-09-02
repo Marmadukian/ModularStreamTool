@@ -313,20 +313,72 @@ def handle_beatsaber_overlay(params):
             overflow: hidden; background: transparent;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }}
-        .overlay-container {{ width: 100%; height: 100%; display: flex; align-items: flex-start; justify-content: flex-start; }}
+        .overlay-container {{
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: flex-start;
+            justify-content: flex-start;
+            padding: 16px;
+        }}
         .bs-badge {{
-            display: flex; align-items: center; gap: 20px;
-            height: 96px; background: {theme['bg']};
-            border: 3px solid {theme['border']}; border-radius: 20px;
-            padding: 0 28px; backdrop-filter: blur(16px);
-            box-shadow: {box_shadow}; color: {theme['text_count']};
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            width: 100%;
+            height: 96px;
+            background: {theme['bg']};
+            border: 3px solid {theme['border']};
+            border-radius: 20px;
+            padding: 0 28px;
+            backdrop-filter: blur(16px);
+            box-shadow: {box_shadow};
+            color: {theme['text_count']};
             text-shadow: {text_shadow};
         }}
-        .cover-art {{ width: 64px; height: 64px; border-radius: 12px; object-fit: cover; background: #0f172a; border: 2px solid rgba(255,255,255,0.15); flex-shrink: 0; }}
-        .info-col {{ display: flex; flex-direction: column; justify-content: center; min-width: 0; max-width: 420px; }}
-        .song-title {{ font-size: 1.6rem; font-weight: 800; color: {theme['text_count']}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1; }}
-        .song-sub {{ font-size: 1.1rem; font-weight: 600; color: {theme['text_label']}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px; }}
-        .stats-col {{ display: flex; align-items: center; gap: 20px; padding-left: 20px; border-left: 2px solid rgba(255,255,255,0.15); flex-shrink: 0; }}
+        .cover-art {{
+            width: 64px;
+            height: 64px;
+            border-radius: 12px;
+            object-fit: cover;
+            background: #0f172a;
+            border: 2px solid rgba(255,255,255,0.15);
+            flex-shrink: 0;
+        }}
+        .info-col {{
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            min-width: 0;
+            flex-grow: 1;
+        }}
+        .song-title {{
+            font-size: 1.6rem;
+            font-weight: 800;
+            color: {theme['text_count']};
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            line-height: 1.1;
+        }}
+        .song-sub {{
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: {theme['text_label']};
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-top: 3px;
+        }}
+        .stats-col {{
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding-left: 20px;
+            border-left: 2px solid rgba(255,255,255,0.15);
+            flex-shrink: 0;
+            margin-left: auto;
+        }}
         .stat-item {{ display: flex; flex-direction: column; align-items: center; }}
         .stat-label {{ font-size: 0.9rem; font-weight: 700; color: {theme['text_label']}; text-transform: uppercase; }}
         .stat-value {{ font-size: 1.6rem; font-weight: 800; font-family: monospace; color: {theme['text_count']}; }}
@@ -376,7 +428,7 @@ def handle_beatsaber_overlay(params):
     </div>
 </body>
 </html>"""
-        return html_response(html)
+        return html_response(html, with_rapid_log=False)
 
     # Stage 2: Pick Layout (Using central item picker helper)
     if theme_key in OVERLAY_THEMES:
@@ -392,7 +444,7 @@ def handle_beatsaber_overlay(params):
         base_route="/obs/beatsaber",
         title="Select Beat Saber HUD Theme",
         accent_color="rose"
-    ))
+    ), with_rapid_log=False)
 
 # --- IRC Commands Handler ---
 
@@ -641,7 +693,7 @@ def handle_beatsaber_vr_queue(params):
     </main>
 </body>
 </html>"""
-    return html_response(html)
+    return html_response(html, with_rapid_log=False)
 
 ROUTES = {
     "/vr/bsr": handle_beatsaber_vr_queue,

@@ -189,7 +189,6 @@ def inject_rapid_log(html_str: str) -> str:
 
     return html_str
 
-
 def render_page(
     title: str,
     body_content: str,
@@ -220,7 +219,7 @@ def render_page(
 </head>
 <body class="min-h-screen">
     {header_html}
-    <main class="p-4 md:p-6 max-w-7xl mx-auto space-y-8 pb-36">
+    <main class="p-4 md:p-6 max-w-[1920px] mx-auto space-y-8 pb-36">
         {body_content}
     </main>
     {bottom_nav}

@@ -214,7 +214,7 @@ def handle_obs_overlay(params):
         poll_js=poll_js
     )
 
-    return html_response(html)
+    return html_response(html, with_rapid_log=False)
 
 def handle_chat_command(user: str, command: str, args: str, tags: dict):
     # Only allow the broadcaster and moderators to modify counters
