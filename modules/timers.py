@@ -3,7 +3,8 @@ import time
 from utils import (
     OVERLAY_THEMES, escape, quote, get_param,
     html_response, json_response, read_json, write_json,
-    render_theme_picker, render_item_picker, get_data_path
+    render_theme_picker, render_item_picker, get_data_path,
+    render_obs_overlay
 )
 
 MODULE_ID = "timers"
@@ -280,43 +281,23 @@ def handle_obs_overlay(params):
 
     # Stage 3: Transparent OBS Browser Source
     if theme_key in OVERLAY_THEMES and target_name:
-        theme = OVERLAY_THEMES[theme_key]
         state = get_timer_display_state(timers.get(target_name, {}))
         qname = quote(target_name)
-        box_shadow = "none" if theme["glow"] == "none" else f"0 4px 20px {theme['glow']}"
-        text_shadow = "none" if theme["glow"] == "none" else f"0 0 12px {theme['glow']}"
 
-        html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>OBS Timer - {escape(target_name)}</title>
-    <style>
-        body {{ background: transparent; overflow: hidden; display: flex; height: 100vh; align-items: center; justify-content: center; margin: 0; }}
-        .badge {{ display: flex; align-items: center; gap: 16px; height: 56px; background: {theme['bg']}; border: 2px solid {theme['border']}; border-radius: 12px; padding: 0 20px; box-shadow: {box_shadow}; }}
-        .label {{ font-family: sans-serif; font-size: 1.15rem; font-weight: 800; color: {theme['text_label']}; text-transform: uppercase; }}
-        .val {{ font-family: monospace; font-size: 2rem; font-weight: 900; color: {theme['text_count']}; text-shadow: {text_shadow}; min-width: 90px; text-align: right; }}
-        .pulse {{ animation: p 1s infinite alternate; }}
-        @keyframes p {{ from {{ opacity: 1; }} to {{ opacity: 0.4; }} }}
-    </style>
-    <script>
-        setInterval(async () => {{
-            try {{
-                const res = await fetch('/obs/timer_display?api=1&name={qname}');
-                if (res.ok) {{
-                    const d = await res.json();
-                    const el = document.getElementById('display-val');
-                    el.innerText = d.formatted;
-                    el.classList.toggle('pulse', !!d.complete);
-                }}
-            }} catch(e) {{}}
-        }}, 300);
-    </script>
-</head>
-<body>
-    <div class="badge"><span class="label">{escape(target_name)}</span><span class="val" id="display-val">{state['formatted']}</span></div>
-</body>
-</html>"""
+        html = render_obs_overlay(
+            title=f"Timer - {target_name}",
+            theme_key=theme_key,
+            inner_html=f"""
+            <span class="obs-label text-lg truncate ml-5">{escape(target_name)}</span>
+            <span class="obs-val text-3xl mr-5 ml-auto" id="display-val">{state['formatted']}</span>
+        """,
+            poll_endpoint=f"/obs/timer_display?api=1&name={qname}",
+            poll_js="""
+            const el = document.getElementById('display-val');
+            el.innerText = data.formatted;
+            el.classList.toggle('opacity-50', !!data.complete);
+        """,
+        )
         return html_response(html)
 
     # Stage 2: Pick Timer

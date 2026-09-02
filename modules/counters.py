@@ -1,7 +1,8 @@
 from utils import (
     OVERLAY_THEMES, escape, quote, get_param,
     html_response, json_response, read_json, write_json,
-    render_theme_picker, render_item_picker, get_data_path
+    render_theme_picker, render_item_picker, get_data_path,
+    render_obs_overlay
 )
 
 MODULE_ID = "counters"
@@ -9,13 +10,6 @@ MODULE_NAME = "Counters & Announcements"
 
 COUNTERS_FILE = get_data_path("counters_store.json")
 MESSAGES_FILE = get_data_path("messages_store.json")
-
-OVERLAY_THEMES = {
-    "indigo": {"label": "Indigo Glow", "bg": "rgba(15, 23, 42, 0.9)", "border": "#6366f1",
-               "glow": "rgba(99, 102, 241, 0.4)", "text_label": "#a5b4fc", "text_count": "#ffffff"},
-    "emerald": {"label": "Emerald Matrix", "bg": "rgba(6, 78, 59, 0.9)", "border": "#10b981",
-                "glow": "rgba(16, 185, 129, 0.4)", "text_label": "#6ee7b7", "text_count": "#ffffff"}
-}
 
 # --- Module JavaScript ---
 SHARED_JS = [
@@ -169,62 +163,28 @@ def handle_obs_overlay(params):
     is_api = get_param(params, "api") == "1"
     counters = load_counters()
 
-    # Fast JSON Polling
     if is_api and target_name:
-        return json_response({"name": target_name, "count": counters.get(target_name, 0)})
+        return json_response(
+            {"name": target_name, "count": counters.get(target_name, 0)}
+        )
 
-    # Stage 3: Transparent OBS Browser Source
+    html = ""
+
     if theme_key in OVERLAY_THEMES and target_name:
-        theme = OVERLAY_THEMES[theme_key]
-        current_val = counters.get(target_name, 0)
         qname = quote(target_name)
-        box_shadow = "none" if theme["glow"] == "none" else f"0 4px 20px {theme['glow']}"
-        text_shadow = "none" if theme["glow"] == "none" else f"0 0 12px {theme['glow']}"
+        current_val = counters.get(target_name, 0)
 
-        html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>OBS Counter - {escape(target_name)}</title>
-    <style>
-        body {{ background: transparent; overflow: hidden; display: flex; height: 100vh; align-items: center; justify-content: center; margin: 0; }}
-        .badge {{ display: flex; align-items: center; gap: 16px; height: 56px; background: {theme['bg']}; border: 2px solid {theme['border']}; border-radius: 12px; padding: 0 18px; box-shadow: {box_shadow}; }}
-        .label {{ font-family: sans-serif; font-size: 1.25rem; font-weight: 800; color: {theme['text_label']}; text-transform: uppercase; }}
-        .val {{ font-family: monospace; font-size: 2rem; font-weight: 900; color: {theme['text_count']}; text-shadow: {text_shadow}; min-width: 44px; text-align: right; }}
-    </style>
-    <script>
-        setInterval(async () => {{
-            try {{
-                const res = await fetch('/obs/counter_display?api=1&name={qname}');
-                if (res.ok) {{
-                    const d = await res.json();
-                    document.getElementById('display-val').innerText = d.count;
-                }}
-            }} catch(e) {{}}
-        }}, 500);
-    </script>
-</head>
-<body>
-    <div class="badge"><span class="label">{escape(target_name)}</span><span class="val" id="display-val">{current_val}</span></div>
-</body>
-</html>"""
-        return html_response(html)
-
-    # Stage 2: Pick Counter
-    if theme_key in OVERLAY_THEMES:
-        return html_response(render_item_picker(
-            base_route="/obs/counter_display",
+        html = render_obs_overlay(
+            title=f"Counter - {target_name}",
             theme_key=theme_key,
-            items=counters,
-            item_type_label="Counter"
-        ))
-
-    # Stage 1: Pick Theme
-    return html_response(render_theme_picker(
-        base_route="/obs/counter_display",
-        title="Select Counter Overlay Theme",
-        accent_color="emerald"
-    ))
+            inner_html=f"""
+            <span class="obs-label text-xl truncate ml-5">{escape(target_name)}</span>
+            <span class="obs-val text-3xl mr-5 ml-auto" id="display-val">{current_val}</span>
+        """,
+            poll_endpoint=f"/obs/counter_display?api=1&name={qname}",
+            poll_js="document.getElementById('display-val').innerText = data.count;",
+        )
+    return html_response(html)
 
 def handle_chat_command(user: str, command: str, args: str, tags: dict):
     # Only allow the broadcaster and moderators to modify counters

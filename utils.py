@@ -166,6 +166,95 @@ def render_item_picker(base_route: str, theme_key: str, items: dict, item_type_l
 </body>
 </html>"""
 
+def render_obs_overlay(
+    title: str,
+    theme_key: str,
+    inner_html: str,
+    custom_css: str = "",
+    poll_endpoint: str = "",
+    poll_interval_ms: int = 500,
+    poll_js: str = "",
+) -> str:
+    """Standardized full-bleed OBS browser source wrapper."""
+    theme = OVERLAY_THEMES.get(theme_key, OVERLAY_THEMES["slate_grey"])
+    box_shadow = (
+        "none" if theme["glow"] == "none" else f"0 4px 24px {theme['glow']}"
+    )
+    text_shadow = (
+        "none" if theme["glow"] == "none" else f"0 0 12px {theme['glow']}"
+    )
+
+    # Optional default polling JS block
+    script_block = ""
+    if poll_endpoint and poll_js:
+        script_block = f"""
+        <script>
+            async function updateOverlay() {{
+                try {{
+                    const res = await fetch('{poll_endpoint}');
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    {poll_js}
+                }} catch (e) {{}}
+            }}
+            setInterval(updateOverlay, {poll_interval_ms});
+            updateOverlay();
+        </script>
+        """
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{escape(title)}</title>
+    <style>
+        * {{
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }}
+        html, body {{
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: transparent;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }}
+        .obs-root {{
+            width: 100%;
+            height: 100%;
+            background: {theme['bg']};
+            border: 2px solid {theme['border']};
+            border-radius: 14px;
+            box-shadow: {box_shadow};
+            backdrop-filter: blur(12px);
+            color: {theme['text_count']};
+            display: flex;
+            align-items: center;
+        }}
+        .obs-label {{
+            color: {theme['text_label']};
+            text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+            text-transform: uppercase;
+            font-weight: 800;
+        }}
+        .obs-val {{
+            color: {theme['text_count']};
+            text-shadow: {text_shadow};
+            font-family: monospace;
+            font-weight: 900;
+        }}
+        {custom_css}
+    </style>
+    {script_block}
+</head>
+<body>
+    <div class="obs-root" id="obs-container">
+        {inner_html}
+    </div>
+</body>
+</html>"""
+
 
 # --- 4. Centralized OBS Overlay Theme Palette ---
 OVERLAY_THEMES = {

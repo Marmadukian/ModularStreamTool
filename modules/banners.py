@@ -2,7 +2,8 @@ import time
 from utils import (
     get_data_path, read_json, write_json,
     escape, quote, get_param, json_response, html_response,
-    OVERLAY_THEMES, render_theme_picker, render_item_picker
+    OVERLAY_THEMES, render_theme_picker, render_item_picker,
+    render_obs_overlay
 )
 
 MODULE_ID = "banners"
@@ -427,15 +428,29 @@ def handle_banner_overlay(params):
         return html_response(html)
 
     # Stage 2: Pick Channel / Slot
-    if theme_key in OVERLAY_THEMES:
-        banners = load_banners()
-        items_preview = {slot: f"{len(items)} queued" for slot, items in banners.items()}
-        return html_response(render_item_picker(
-            base_route="/obs/banner_display",
+    if theme_key in OVERLAY_THEMES and slot:
+        qslot = quote(slot)
+        html = render_obs_overlay(
+            title=f"Banner - {slot}",
             theme_key=theme_key,
-            items=items_preview,
-            item_type_label="Alert Channel"
-        ))
+            custom_css="""
+            .obs-root { justify-content: flex-start; padding: 0 20px; transition: opacity 0.3s; }
+            .hidden-alert { opacity: 0; }
+        """,
+            inner_html="""
+            <div class="obs-val text-lg truncate" id="b-title"></div>
+            <div class="obs-label text-sm truncate ml-3" id="b-text"></div>
+        """,
+            poll_endpoint=f"/obs/banner_display?api=1&name={qslot}",
+            poll_js="""
+            const root = document.getElementById('obs-container');
+            if (!data.has_item) { root.classList.add('hidden-alert'); return; }
+            root.classList.remove('hidden-alert');
+            document.getElementById('b-title').innerText = data.title;
+            document.getElementById('b-text').innerText = data.text || '';
+        """,
+        )
+        return html_response(html)
 
     # Stage 1: Pick Theme
     return html_response(render_theme_picker(

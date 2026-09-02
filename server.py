@@ -209,10 +209,27 @@ if __name__ == "__main__":
 
     server = HTTPServer(("0.0.0.0", PORT), UnifiedTrackerHandler)
     print("=====================================================")
-    print(f"Server Running: http://{ip}:{PORT}")
-    print(f"Localhost:      http://localhost:{PORT}")
-    print(f"Loaded Modules: {', '.join(MODULE_REGISTRY.keys())}")
+    print(f"Server Running on http://{ip}:{PORT}")
+    print(f"Loaded Modules: {', '.join(MODULE_REGISTRY.keys()) if MODULE_REGISTRY else 'None'}")
+    print("-----------------------------------------------------")
+    print("Active Endpoints:")
+
+    # Core Endpoints
+    print("  [Core Dashboards]")
+    print(f"    - Desktop: http://localhost:{PORT}/")
+    print(f"    - Remote:  http://localhost:{PORT}/remote")
+
+    # Dynamically Loaded Module Endpoints
+    active_routes = get_active_routes()
+    if active_routes:
+        print("\n  [Module Routes & OBS Overlays]")
+        for route in sorted(active_routes.keys()):
+            # Visually separate API routes from OBS overlays
+            prefix = "[API]" if "/api/" in route else "[OBS]" if "/obs/" in route else "     "
+            print(f"    {prefix} http://localhost:{PORT}{route}")
+
     print("=====================================================")
+    print("[*] Press Ctrl+C to stop.")
 
     try:
         server.serve_forever()
