@@ -125,8 +125,7 @@ def json_response(data: dict or list, status: int = 200):
 
 
 def html_response(html_str: str, status: int = 200, with_rapid_log: bool = True):
-    # Never inject into transparent OBS browser sources
-    if with_rapid_log and "/obs/" not in html_str:
+    if with_rapid_log and "obs-root" not in html_str:
         html_str = inject_rapid_log(html_str)
     return html_str, ("Content-Type", "text/html")
 

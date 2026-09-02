@@ -388,14 +388,11 @@ def get_local_ip():
 if __name__ == "__main__":
     load_all_modules()
 
+    ip = get_local_ip()
+
     # Start the Zero-Helix IRC Listener
     listener = TwitchListener(get_active_modules_fn=get_currently_active_modules)
     listener.start()
-
-    ip = get_local_ip()
-
-    twitch = TwitchListener(get_active_modules_fn=get_currently_active_modules)
-    twitch_thread = twitch.start()
 
     server = HTTPServer(("0.0.0.0", PORT), UnifiedTrackerHandler)
     print("=====================================================")

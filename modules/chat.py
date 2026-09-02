@@ -15,13 +15,13 @@ from utils import (
     get_data_path,
 )
 
-
 MODULE_ID = "chat"
 MODULE_NAME = "Stream Chat Overlays"
 
 # In-memory circular buffer for active chat messages
 MAX_CHAT_HISTORY = 75
 chat_history = []
+_msg_counter = 0
 
 CHAT_LAYOUTS = {
     "box": {
@@ -53,7 +53,9 @@ CHAT_LAYOUTS = {
 
 def handle_chat_message(user: str, message: str, tags: dict):
     """Called by twitch_listener whenever a chat message arrives."""
-    global chat_history
+    global chat_history, _msg_counter
+    _msg_counter += 1
+
     color = tags.get("color") or "#38bdf8"
     badges = tags.get("badges", "")
 
@@ -70,7 +72,7 @@ def handle_chat_message(user: str, message: str, tags: dict):
         badge_label = "⭐ "
 
     chat_history.append({
-        "id": int(time.time() * 1000) % 10000000,
+        "id": _msg_counter,
         "user": user,
         "badge": badge_label,
         "color": color,
@@ -91,11 +93,11 @@ def api_get_chat(params):
     if after_id > 0:
         new_msgs = [m for m in chat_history if m["id"] > after_id]
     else:
-        new_msgs = chat_history[-25:]  # Start with recent history
+        new_msgs = chat_history[-25:]  # Seed with recent messages on connect
 
     return json_response({
         "messages": new_msgs,
-        "last_id": chat_history[-1]["id"] if chat_history else 0,
+        "last_id": chat_history[-1]["id"] if chat_history else after_id,
     })
 
 
@@ -139,13 +141,13 @@ def handle_chat_overlay(params):
     if theme_key in OVERLAY_THEMES and layout_key in CHAT_LAYOUTS:
         layout = CHAT_LAYOUTS[layout_key]
         fade_script = ""
-        if layout["auto_fade"]:
+        if layout.get("auto_fade"):
             fade_script = """
-            setTimeout(() => {
-                msgEl.style.transition = 'opacity 1s ease';
-                msgEl.style.opacity = '0';
-                setTimeout(() => msgEl.remove(), 1000);
-            }, 12000);
+                        setTimeout(() => {
+                            row.style.transition = 'opacity 1s ease';
+                            row.style.opacity = '0';
+                            setTimeout(() => row.remove(), 1000);
+                        }, 12000);
             """
 
         custom_css = f"""
@@ -155,7 +157,15 @@ def handle_chat_overlay(params):
             box-shadow: none !important;
             backdrop-filter: none !important;
             overflow: hidden;
+            display: flex;
             {layout['container_css']}
+        }}
+        #chat-stream-box {{
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            width: 100%;
+            gap: 6px;
         }}
         .chat-row {{
             width: 100%;
@@ -176,44 +186,52 @@ def handle_chat_overlay(params):
         }}
         """
 
-        poll_js = f"""
-        let lastId = 0;
-        const box = document.getElementById('obs-container');
+        script_tag = f"""
+        <script>
+            let lastId = 0;
+            const box = document.getElementById('chat-stream-box');
 
-        async function fetchMessages() {{
-            try {{
-                const res = await fetch(`/api/chat/messages?after=${{lastId}}`);
-                if (!res.ok) return;
-                const data = await res.json();
+            async function fetchMessages() {{
+                try {{
+                    const res = await fetch('/api/chat/messages?after=' + lastId);
+                    if (!res.ok) return;
+                    const data = await res.json();
 
-                if (data.messages && data.messages.length > 0) {{
-                    data.messages.forEach(m => {{
-                        const row = document.createElement('div');
-                        row.className = 'chat-row';
-                        row.innerHTML = `<span class="chat-user" style="color: ${{m.color}}">${{m.badge}}${{m.user}}:</span><span class="chat-text">${{m.text}}</span>`;
-                        box.appendChild(row);
+                    if (data.messages && data.messages.length > 0) {{
+                        data.messages.forEach(m => {{
+                            const row = document.createElement('div');
+                            row.className = 'chat-row';
+                            row.innerHTML = `<span class="chat-user" style="color: ${{m.color}}">${{m.badge}}${{m.user}}:</span><span class="chat-text">${{m.text}}</span>`;
+                            box.appendChild(row);
+                            {fade_script}
+                        }});
 
-                        const msgEl = row;
-                        {fade_script}
-                    }});
-
-                    lastId = data.last_id;
-                    while (box.children.length > 50) {{
-                        box.removeChild(box.firstChild);
+                        lastId = data.last_id;
+                        while (box.children.length > 50) {{
+                            box.removeChild(box.firstChild);
+                        }}
                     }}
-                }}
-            }} catch(e) {{}}
-        }}
-        setInterval(fetchMessages, 400);
+                }} catch(e) {{}}
+            }}
+
+            fetchMessages();
+            setInterval(fetchMessages, 400);
+        </script>
         """
 
         html = render_obs_overlay(
             title=f"OBS Chat - {layout_key}",
             theme_key=theme_key,
-            inner_html="",  # Populated live by client-side JS
+            inner_html='<div id="chat-stream-box"></div>',
             custom_css=custom_css,
-            poll_js=poll_js,
         )
+
+        # Force the script tag in before closing body tag so render_obs_overlay can't drop it
+        if "</body>" in html:
+            html = html.replace("</body>", f"{script_tag}</body>")
+        else:
+            html += script_tag
+
         return html_response(html)
 
     # Step 1: Pick Theme
@@ -230,6 +248,7 @@ def handle_chat_overlay(params):
 
 
 def render_dashboard_widget(params):
+    print(f"[DEBUG DASH CHAT] chat_history length: {len(chat_history)}, id: {id(chat_history)}")
     recent = chat_history[-8:]
     rows = []
     for m in reversed(recent):
@@ -240,21 +259,65 @@ def render_dashboard_widget(params):
         </div>
         """)
 
+    content = "".join(
+        rows) if rows else '<div class="text-slate-500 text-xs italic py-4 text-center">Chat quiet. Waiting for messages...</div>'
+
     return f"""
-    <div class="bg-slate-950/60 border border-slate-800 rounded-2xl p-5 space-y-4">
+    <div class="p-5 space-y-4">
         <div class="flex items-center justify-between border-b border-slate-800 pb-3">
             <div>
                 <h2 class="text-sm font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-2">
                     Live Chat Stream
                     <a href="/obs/chat" target="_blank" class="text-[10px] text-slate-400 hover:text-emerald-300 lowercase font-mono">(+ obs links)</a>
                 </h2>
-                <span class="text-xs text-slate-400">{len(chat_history)} messages buffered in memory</span>
+                <span id="dash-chat-count" class="text-xs text-slate-400">{len(chat_history)} messages buffered in memory</span>
             </div>
         </div>
-        <div class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-            {''.join(rows) if rows else '<div class="text-slate-500 text-xs italic py-4 text-center">Chat quiet. Waiting for messages...</div>'}
+        <div id="dash-chat-feed" class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+            {content}
         </div>
     </div>
+
+    <script>
+        (function() {{
+            if (window._chatDashPollingInitialized) return;
+            window._chatDashPollingInitialized = true;
+
+            let lastSeenId = 0;
+            const feed = document.getElementById('dash-chat-feed');
+            const countLabel = document.getElementById('dash-chat-count');
+
+            async function pollDashChat() {{
+                try {{
+                    const res = await fetch('/api/chat/messages?after=' + lastSeenId);
+                    if (!res.ok) return;
+                    const data = await res.json();
+
+                    if (data.messages && data.messages.length > 0) {{
+                        // Clear placeholder if it exists
+                        const emptyNotice = feed.querySelector('.italic');
+                        if (emptyNotice) feed.innerHTML = '';
+
+                        data.messages.forEach(m => {{
+                            const row = document.createElement('div');
+                            row.className = 'p-2 bg-slate-900 border border-slate-800 rounded-lg text-xs';
+                            row.innerHTML = `<span class="font-bold" style="color: ${{m.color}}">${{m.badge}}${{m.user}}:</span><span class="text-slate-300 ml-1">${{m.text}}</span>`;
+                            feed.prepend(row);
+                        }});
+
+                        lastSeenId = data.last_id;
+
+                        // Trim to recent 15
+                        while (feed.children.length > 15) {{
+                            feed.removeChild(feed.lastChild);
+                        }}
+                    }}
+                }} catch (e) {{}}
+            }}
+
+            setInterval(pollDashChat, 1000);
+        }})();
+    </script>
     """
 
 
@@ -277,5 +340,7 @@ def render_remote_widget(params):
     """
 
 
-ROUTES = {"/api/chat/messages": api_get_chat, "/obs/chat": handle_chat_overlay}
-ROUTES = {"/api/chat/messages": api_get_chat, "/obs/chat": handle_chat_overlay}
+ROUTES = {
+    "/api/chat/messages": api_get_chat,
+    "/obs/chat": handle_chat_overlay,
+}
