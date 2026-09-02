@@ -207,6 +207,9 @@ if __name__ == "__main__":
 
     ip = get_local_ip()
 
+    twitch = TwitchListener(get_active_modules_fn=get_currently_active_modules)
+    twitch_thread = twitch.start()
+
     server = HTTPServer(("0.0.0.0", PORT), UnifiedTrackerHandler)
     print("=====================================================")
     print(f"Server Running on http://{ip}:{PORT}")
@@ -224,7 +227,6 @@ if __name__ == "__main__":
     if active_routes:
         print("\n  [Module Routes & OBS Overlays]")
         for route in sorted(active_routes.keys()):
-            # Visually separate API routes from OBS overlays
             prefix = "[API]" if "/api/" in route else "[OBS]" if "/obs/" in route else "     "
             print(f"    {prefix} http://localhost:{PORT}{route}")
 

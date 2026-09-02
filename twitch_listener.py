@@ -114,6 +114,12 @@ class TwitchListener:
                     time.sleep(3)
                     continue
 
+
+                if self.get_active_modules:
+                    for mod in self.get_active_modules():
+                        if hasattr(mod, "handle_chat_message"):
+                            mod.handle_chat_message(sender, message, tags)
+
                 read_buffer += data.decode("utf-8", errors="ignore")
                 lines = read_buffer.split("\r\n")
                 read_buffer = lines.pop()
@@ -132,6 +138,14 @@ class TwitchListener:
                         sender = tags.get("display-name") or (prefix.split("!")[0] if prefix else "Anonymous")
                         message = args[1] if len(args) > 1 else ""
 
+                        if self.get_active_modules:
+                            for mod in self.get_active_modules():
+                                if hasattr(mod, "handle_chat_message"):
+                                    try:
+                                        mod.handle_chat_message(sender, message, tags)
+                                    except Exception as e:
+                                        print(f"[!] Error in chat message handler: {e}")
+
                         # 1. Cheered Bits Detection
                         if "bits" in tags:
                             bit_count = int(tags.get("bits", "0"))
@@ -148,6 +162,7 @@ class TwitchListener:
                             command = tokens[0].lower()
                             cmd_args = tokens[1].strip() if len(tokens) > 1 else ""
                             self._dispatch_command(sender, command, cmd_args, tags)
+
 
                     # Raids & Subs / Resubs
                     elif cmd == "USERNOTICE":
