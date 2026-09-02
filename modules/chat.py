@@ -16,7 +16,7 @@ from utils import (
 )
 
 MODULE_ID = "chat"
-MODULE_NAME = "Stream Chat Overlays"
+MODULE_NAME = "Stream Chat"
 
 # In-memory circular buffer for active chat messages
 MAX_CHAT_HISTORY = 75

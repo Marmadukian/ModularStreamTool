@@ -10,7 +10,7 @@ from utils import (
 )
 
 MODULE_ID = "vault_manager"
-MODULE_NAME = "Vault Area & Project Manager"
+MODULE_NAME = "Project Manager"
 
 VAULT_DIR = os.path.join(BASE_DIR, "Vault")
 AREAS_DIR = os.path.join(VAULT_DIR, "Areas")

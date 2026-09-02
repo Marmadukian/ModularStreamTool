@@ -5,7 +5,7 @@ from utils import (
 )
 
 MODULE_ID = "messages"
-MODULE_NAME = "Static Text & Announcements"
+MODULE_NAME = "Static Text"
 
 MESSAGES_FILE = get_data_path("messages_store.json")
 

@@ -11,7 +11,7 @@ from utils import (
 )
 
 MODULE_ID = "beatsaber"
-MODULE_NAME = "Beat Saber HUD & Queue"
+MODULE_NAME = "Beat Saber Integration"
 
 REQUESTS_FILE = get_data_path("song_requests.json")
 MODERATION_FILE = get_data_path("bs_moderation.json")

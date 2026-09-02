@@ -83,10 +83,9 @@ def render_toggle_menu() -> str:
         </a>
         """)
     return f"""
-    <div class="flex flex-wrap items-center gap-2 bg-slate-950/70 border border-slate-800/80 p-3 rounded-xl">
-        <span class="text-[11px] uppercase tracking-wider text-slate-400 font-bold mr-1">Modules:</span>
-        {''.join(toggle_pills)}
-    </div>
+        <div class="flex flex-wrap items-center gap-2 bg-slate-950/70 border border-slate-800/80 p-3 rounded-xl">
+            {''.join(toggle_pills)}
+        </div>
     """
 
 

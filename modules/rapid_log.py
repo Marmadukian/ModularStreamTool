@@ -11,7 +11,7 @@ from utils import (
 from modules.vault_manager import save_vault_task, get_vault_tree, TASK_TYPES, BLOCK_TYPES, STATUS_TYPES
 
 MODULE_ID = "rapid_log"
-MODULE_NAME = "BuJo Rapid Log & End of Day"
+MODULE_NAME = "End of Day Review"
 
 BUJO_DIR = os.path.join(BASE_DIR, "Vault", "BuJo")
 LOGS_DIR = os.path.join(BUJO_DIR, "Logs")

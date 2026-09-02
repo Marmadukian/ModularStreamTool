@@ -8,7 +8,7 @@ from utils import (
 )
 
 MODULE_ID = "timers"
-MODULE_NAME = "Stream Timers & Stopwatches"
+MODULE_NAME = "Timers & Stopwatches"
 
 TIMERS_FILE = get_data_path("timers_store.json")
 

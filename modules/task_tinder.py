@@ -17,7 +17,7 @@ from utils import (
 )
 
 MODULE_ID = "task_tinder"
-MODULE_NAME = "Task Tinder (Energy Deck)"
+MODULE_NAME = "Task Tinder"
 
 TASKS_FILE = get_data_path("tasks_store.json")
 

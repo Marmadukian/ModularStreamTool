@@ -2,30 +2,22 @@ import time
 from utils import (
     get_data_path, read_json, write_json,
     escape, quote, get_param, json_response, html_response,
-    OVERLAY_THEMES, render_theme_picker, render_item_picker,
-    render_obs_overlay
+    OVERLAY_THEMES, render_theme_picker, render_obs_overlay
 )
 
 MODULE_ID = "banners"
-MODULE_NAME = "Stream Banners & Received Alerts"
+MODULE_NAME = "Banners & Alerts"
 
 BANNERS_FILE = get_data_path("banners_store.json")
 
 SHARED_JS = [
     """
-    function promptPushAlert(slot) {
-        const title = prompt(`Alert Title for "${slot}" (e.g., New Raid!, 500 Bits):`);
+    function promptCustomAlert() {
+        const title = prompt("Alert Title (e.g., Follower, Shoutout):");
         if (!title || !title.trim()) return;
-        const text = prompt("Alert Message / Subtitle:", "Thanks for the hype!");
+        const text = prompt("Alert Message / Subtitle:", "Welcome to the stream!");
         const duration = prompt("Display duration in seconds:", "6");
-        window.location.search = `?action=banner_push&slot=${encodeURIComponent(slot)}&title=${encodeURIComponent(title.trim())}&text=${encodeURIComponent(text || '')}&duration=${encodeURIComponent(duration || '6')}`;
-    }
-
-    function promptCreateBannerSlot() {
-        const slot = prompt("New banner/alert slot name (e.g., Alerts, RaidBanner, Ticker):");
-        if (slot && slot.trim()) {
-            window.location.search = `?action=banner_create_slot&slot=${encodeURIComponent(slot.trim())}`;
-        }
+        window.location.search = `?action=banner_push&title=${encodeURIComponent(title.trim())}&text=${encodeURIComponent(text || '')}&duration=${encodeURIComponent(duration || '6')}`;
     }
     """
 ]
@@ -33,25 +25,30 @@ SHARED_JS = [
 
 # --- Persistence & Auto-Expiring Queue Logic ---
 
-def load_banners() -> dict:
-    return read_json(BANNERS_FILE, {})
+def load_banners() -> list:
+    data = read_json(BANNERS_FILE, [])
+    # Backward compatibility: unwrap old dict formats if present
+    if isinstance(data, dict):
+        flattened = []
+        for items in data.values():
+            if isinstance(items, list):
+                flattened.extend(items)
+        return flattened
+    return data if isinstance(data, list) else []
 
 
-def save_banners(data: dict) -> None:
+def save_banners(data: list) -> None:
     write_json(BANNERS_FILE, data)
 
 
-def receive_banner_alert(slot: str, title: str, text: str = "", duration: int = 6, sound: bool = True):
+def receive_banner_alert(title: str, text: str = "", duration: int = 6, sound: bool = True):
     """
     Primary ingestion point for events (Twitch IRC, bits, raids, commands, or manual).
-    Pushes an alert into the slot's received queue with an active timer.
+    Pushes an alert into the global queue with an active timer.
     """
-    banners = load_banners()
-    if slot not in banners:
-        banners[slot] = []
-
+    queue = load_banners()
     new_id = int(time.time() * 1000) % 10000000
-    banners[slot].append({
+    queue.append({
         "id": new_id,
         "title": title.strip(),
         "text": text.strip(),
@@ -60,16 +57,15 @@ def receive_banner_alert(slot: str, title: str, text: str = "", duration: int = 
         "received_at": time.time(),
         "started_at": 0.0,  # Starts ticking when OBS fetches it
     })
-    save_banners(banners)
+    save_banners(queue)
 
 
-def get_active_alert(slot: str) -> dict:
+def get_active_alert() -> dict:
     """
-    Returns the currently active alert for a slot.
+    Returns the currently active alert.
     Automatically pops expired items once their display duration ends.
     """
-    banners = load_banners()
-    queue = banners.get(slot, [])
+    queue = load_banners()
     now = time.time()
     dirty = False
 
@@ -92,8 +88,7 @@ def get_active_alert(slot: str) -> dict:
             break
 
     if dirty:
-        banners[slot] = queue
-        save_banners(banners)
+        save_banners(queue)
 
     return queue[0] if queue else None
 
@@ -105,148 +100,159 @@ def handle_common_commands(params):
     if not action or not action.startswith("banner_"):
         return
 
-    slot = get_param(params, "slot").strip()
-    banners = load_banners()
+    queue = load_banners()
 
-    if action == "banner_create_slot" and slot:
-        if slot not in banners:
-            banners[slot] = []
-            save_banners(banners)
-
-    elif action == "banner_push" and slot:
+    if action == "banner_push":
         title = get_param(params, "title")
         text = get_param(params, "text")
         duration = int(get_param(params, "duration", "6"))
         if title:
-            receive_banner_alert(slot, title, text, duration=duration)
+            receive_banner_alert(title, text, duration=duration)
 
-    elif action == "banner_dismiss" and slot in banners:
-        if banners[slot]:
-            banners[slot].pop(0)
-            save_banners(banners)
+    elif action == "banner_test_raid":
+        receive_banner_alert("Raid: Pokimane!", "Brought an army of 250 viewers!", duration=8)
 
-    elif action == "banner_clear" and slot in banners:
-        banners[slot] = []
-        save_banners(banners)
+    elif action == "banner_test_bits":
+        receive_banner_alert("Bits Cheered!", "Cheered 500 bits: Let's goooo!", duration=6)
 
-    elif action == "banner_delete_slot" and slot in banners:
-        del banners[slot]
-        save_banners(banners)
+    elif action == "banner_test_sub":
+        receive_banner_alert("New Subscriber!", "Subscribed at Tier 1 (3 Months)!", duration=6)
+
+    elif action == "banner_dismiss":
+        if queue:
+            queue.pop(0)
+            save_banners(queue)
+
+    elif action == "banner_clear":
+        save_banners([])
 
 
 # --- Dashboard & Mobile Remote Widgets ---
 
-def render_dashboard_widget(params):
-    banners = load_banners()
-    slot_cards = []
+def _render_queue_items(items: list) -> str:
+    if not items:
+        return '<div class="text-slate-500 text-xs italic py-6 text-center">Alert queue empty (ready for events).</div>'
 
-    for slot, items in sorted(banners.items()):
-        qslot = quote(slot)
-        queue_items = []
+    rendered = []
+    for idx, item in enumerate(items):
+        is_active = (idx == 0)
+        badge_label = "Playing" if is_active else f"#{idx + 1}"
+        bg = "bg-slate-900 border-cyan-500/50" if is_active else "bg-slate-950/70 border-slate-800"
 
-        for idx, item in enumerate(items):
-            is_active = (idx == 0)
-            badge_label = "Playing" if is_active else f"Queue #{idx + 1}"
-            bg = "bg-slate-900 border-cyan-500/50" if is_active else "bg-slate-950/70 border-slate-800"
-
-            queue_items.append(f"""
-            <div class="flex items-center justify-between p-2 rounded-lg border {bg} text-xs">
-                <div class="truncate mr-2">
-                    <span class="font-bold text-slate-300 font-mono text-[10px] mr-1.5 px-1 py-0.5 rounded bg-slate-800">{badge_label}</span>
-                    <strong class="text-white">{escape(item['title'])}</strong>
-                    {f'<span class="text-slate-400 text-[11px] ml-1">({escape(item["text"])})</span>' if item['text'] else ''}
-                </div>
-                <span class="text-[10px] font-mono text-slate-500 shrink-0">{item.get('duration', 6)}s</span>
+        rendered.append(f"""
+        <div class="flex items-center justify-between p-2.5 rounded-lg border {bg} text-xs">
+            <div class="truncate mr-2">
+                <span class="font-bold text-slate-300 font-mono text-[10px] mr-1.5 px-1.5 py-0.5 rounded bg-slate-800">{badge_label}</span>
+                <strong class="text-white">{escape(item['title'])}</strong>
+                {f'<span class="text-slate-400 text-[11px] ml-1.5">({escape(item["text"])})</span>' if item.get('text') else ''}
             </div>
-            """)
-
-        queue_block = "".join(
-            queue_items) if queue_items else '<div class="text-slate-500 text-xs italic py-3 text-center">Alert queue empty (ready for events).</div>'
-
-        slot_cards.append(f"""
-        <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-sm space-y-3">
-            <div class="flex items-center justify-between border-b border-slate-800/80 pb-2">
-                <div class="flex items-center gap-2">
-                    <span class="font-bold text-sm text-cyan-300 uppercase tracking-wider">{escape(slot)}</span>
-                    <span class="text-[10px] font-mono bg-slate-950 border border-slate-800 px-1.5 py-0.5 rounded text-slate-400">{len(items)} waiting</span>
-                </div>
-                <div class="flex items-center gap-2">
-                    <a href="/obs/banner_display?theme=cyan_blue&name={qslot}" target="_blank" class="text-[11px] text-cyan-400 hover:underline">OBS ↗</a>
-                    <a href="/?action=banner_delete_slot&slot={qslot}" onclick="return confirm('Delete slot {escape(slot)}?');" class="text-slate-600 hover:text-rose-400 text-xs font-mono">✕</a>
-                </div>
-            </div>
-
-            <!-- Action Controls -->
-            <div class="flex items-center justify-between gap-2">
-                <button type="button" onclick="promptPushAlert('{escape(slot)}')" class="bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs px-2.5 py-1.5 rounded transition">+ Test Alert</button>
-                <div class="flex gap-1.5">
-                    <a href="/?action=banner_dismiss&slot={qslot}" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded border border-slate-700">Skip Active ⏭</a>
-                    <a href="/?action=banner_clear&slot={qslot}" onclick="return confirm('Clear queue for {escape(slot)}?');" class="px-2 py-1.5 bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 text-xs rounded border border-slate-700">Clear</a>
-                </div>
-            </div>
-
-            <!-- Queue preview -->
-            <div class="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                {queue_block}
-            </div>
+            <span class="text-[10px] font-mono text-slate-500 shrink-0">{item.get('duration', 6)}s</span>
         </div>
         """)
+    return "".join(rendered)
 
-    grid = "".join(
-        slot_cards) if slot_cards else '<div class="col-span-full text-slate-500 text-xs italic py-6 text-center">No alert channels setup. Add "Alerts" to start.</div>'
+
+def render_dashboard_widget(params):
+    items = load_banners()
+    queue_html = _render_queue_items(items)
 
     return f"""
-    <div class="bg-slate-950/60 border border-slate-800 rounded-2xl p-5 space-y-4">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+    <div id="alerts-widget-root" class="bg-slate-950/60 border border-slate-800 rounded-2xl p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
             <div>
                 <h2 class="text-sm font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-2">
-                    Received Banners & Dynamic Alerts
-                    <a href="/obs/banner_display" target="_blank" class="text-[10px] text-slate-400 hover:text-cyan-300 lowercase font-mono">(+ obs links)</a>
+                    Alert Queue
+                    <a href="/obs/banner_display?theme=cyan_blue" target="_blank" class="text-[10px] text-slate-400 hover:text-cyan-300 lowercase font-mono">(+ obs link)</a>
                 </h2>
-                <p class="text-xs text-slate-400">Auto-popping notification queues for stream events & popups</p>
+                <p class="text-xs text-slate-400">Live incoming notifications & overlay stream queue</p>
             </div>
-            <button type="button" onclick="promptCreateBannerSlot()" class="bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition">
-                + New Alert Channel
-            </button>
+
+            <!-- Quick Test Buttons -->
+            <div class="flex flex-wrap items-center gap-1.5">
+                <span class="text-[10px] text-slate-500 font-mono mr-1">Test:</span>
+                <a href="/?action=banner_test_raid" class="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-cyan-400 border border-slate-800 rounded text-xs font-semibold">Raid</a>
+                <a href="/?action=banner_test_bits" class="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-amber-400 border border-slate-800 rounded text-xs font-semibold">Bits</a>
+                <a href="/?action=banner_test_sub" class="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-purple-400 border border-slate-800 rounded text-xs font-semibold">Sub</a>
+                <button type="button" onclick="promptCustomAlert()" class="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-xs font-bold transition">Custom</button>
+            </div>
         </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {grid}
+
+        <!-- Action Controls -->
+        <div class="flex items-center justify-between gap-2">
+            <div class="flex gap-2">
+                <a href="/?action=banner_dismiss" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700">Skip Active ⏭</a>
+                <a href="/?action=banner_clear" onclick="return confirm('Clear alert queue?');" class="px-3 py-1.5 bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 text-xs rounded-lg border border-slate-700">Clear All</a>
+            </div>
+            <span id="alerts-count-badge" class="text-[11px] font-mono text-slate-400">{len(items)} alerts waiting</span>
         </div>
+
+        <!-- Alert Queue Container -->
+        <div id="alerts-queue-list" class="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+            {queue_html}
+        </div>
+
+        <!-- Auto-Update Poller -->
+        <script>
+            (function() {{
+                let lastQueueSig = "{len(items)}:{items[0]['id'] if items else 0}";
+
+                async function checkAlertUpdates() {{
+                    try {{
+                        const res = await fetch('/obs/banner_display?api=1');
+                        if (!res.ok) return;
+                        const d = await res.json();
+
+                        const currentSig = `${{d.queue_length}}:${{d.id || 0}}`;
+                        if (currentSig !== lastQueueSig) {{
+                            lastQueueSig = currentSig;
+                            const badge = document.getElementById('alerts-count-badge');
+                            if (badge) badge.innerText = `${{d.queue_length}} alerts waiting`;
+
+                            if (!d.has_item && d.queue_length === 0) {{
+                                const list = document.getElementById('alerts-queue-list');
+                                if (list) list.innerHTML = '<div class="text-slate-500 text-xs italic py-6 text-center">Alert queue empty (ready for events).</div>';
+                            }} else {{
+                                window.location.reload();
+                            }}
+                        }}
+                    }} catch (e) {{}}
+                }}
+                setInterval(checkAlertUpdates, 2000);
+            }})();
+        </script>
     </div>
     """
 
 
 def render_remote_widget(params):
-    banners = load_banners()
-    cards = []
-
-    for slot, items in sorted(banners.items()):
-        qslot = quote(slot)
-        active = items[0] if items else None
-        title_text = active['title'] if active else "No active alerts"
-        sub_text = active['text'] if active and active['text'] else ""
-
-        cards.append(f"""
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-2">
-            <div class="flex items-center justify-between">
-                <span class="text-xs font-bold uppercase tracking-wider text-cyan-400">{escape(slot)} ({len(items)})</span>
-                <button type="button" onclick="promptPushAlert('{escape(slot)}')" class="text-xs text-cyan-400 active:underline">+ Send</button>
-            </div>
-            <div class="bg-slate-950 border border-slate-800/80 rounded-lg p-2.5">
-                <div class="text-sm font-bold text-white truncate">{escape(title_text)}</div>
-                {f'<div class="text-xs text-slate-400 truncate mt-0.5">{escape(sub_text)}</div>' if sub_text else ''}
-            </div>
-            <div class="grid grid-cols-2 gap-2 pt-1">
-                <a href="/remote?action=banner_dismiss&slot={qslot}" class="text-center py-2 bg-slate-800 active:bg-slate-700 text-white rounded-lg text-xs font-bold border border-slate-700">Skip ⏭</a>
-                <a href="/remote?action=banner_clear&slot={qslot}" class="text-center py-2 bg-slate-900 active:bg-rose-950 text-slate-400 rounded-lg text-xs border border-slate-800">Clear All</a>
-            </div>
-        </div>
-        """)
+    items = load_banners()
+    active = items[0] if items else None
+    title_text = active['title'] if active else "No active alerts"
+    sub_text = active['text'] if active and active['text'] else ""
 
     return f"""
-    <div class="space-y-3">
-        <h2 class="text-xs font-bold uppercase tracking-wider text-cyan-400">Received Alerts</h2>
-        {''.join(cards) if cards else '<div class="text-slate-500 text-xs text-center py-4">No alert channels.</div>'}
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-3">
+        <div class="flex items-center justify-between">
+            <span class="text-xs font-bold uppercase tracking-wider text-cyan-400">Alert Queue ({len(items)})</span>
+            <button type="button" onclick="promptCustomAlert()" class="text-xs text-cyan-400 active:underline">+ Custom</button>
+        </div>
+
+        <div class="bg-slate-950 border border-slate-800/80 rounded-lg p-2.5">
+            <div class="text-sm font-bold text-white truncate">{escape(title_text)}</div>
+            {f'<div class="text-xs text-slate-400 truncate mt-0.5">{escape(sub_text)}</div>' if sub_text else ''}
+        </div>
+
+        <!-- Quick Test Actions -->
+        <div class="grid grid-cols-3 gap-1.5">
+            <a href="/remote?action=banner_test_raid" class="text-center py-1.5 bg-slate-800 text-cyan-400 rounded text-[11px] font-semibold">Raid</a>
+            <a href="/remote?action=banner_test_bits" class="text-center py-1.5 bg-slate-800 text-amber-400 rounded text-[11px] font-semibold">Bits</a>
+            <a href="/remote?action=banner_test_sub" class="text-center py-1.5 bg-slate-800 text-purple-400 rounded text-[11px] font-semibold">Sub</a>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 pt-1">
+            <a href="/remote?action=banner_dismiss" class="text-center py-2 bg-slate-800 active:bg-slate-700 text-white rounded-lg text-xs font-bold border border-slate-700">Skip ⏭</a>
+            <a href="/remote?action=banner_clear" class="text-center py-2 bg-slate-900 active:bg-rose-950 text-slate-400 rounded-lg text-xs border border-slate-800">Clear All</a>
+        </div>
     </div>
     """
 
@@ -255,28 +261,26 @@ def render_remote_widget(params):
 
 def handle_banner_overlay(params):
     theme_key = get_param(params, "theme")
-    slot = get_param(params, "name")
     is_api = get_param(params, "api") == "1"
 
     # Fast JSON Endpoint for OBS Polling & Timer Expiration Processing
-    if is_api and slot:
-        active = get_active_alert(slot)
+    if is_api:
+        active = get_active_alert()
+        queue = load_banners()
         if active:
             return json_response({
-                "slot": slot,
                 "has_item": True,
+                "queue_length": len(queue),
                 "id": active["id"],
                 "title": active["title"],
                 "text": active["text"],
                 "sound": active.get("sound", True)
             })
-        return json_response({"slot": slot, "has_item": False})
+        return json_response({"has_item": False, "queue_length": len(queue)})
 
-    # Stage 3: Transparent OBS Overlay Screen
-    if theme_key in OVERLAY_THEMES and slot:
+    # Stage 3: Transparent OBS Popup Card
+    if theme_key in OVERLAY_THEMES and get_param(params, "card") == "1":
         theme = OVERLAY_THEMES[theme_key]
-        qslot = quote(slot)
-
         box_shadow = "none" if theme["glow"] == "none" else f"0 6px 30px {theme['glow']}"
         text_shadow = "none" if theme["glow"] == "none" else f"0 0 14px {theme['glow']}"
 
@@ -284,7 +288,7 @@ def handle_banner_overlay(params):
 <html>
 <head>
     <meta charset="utf-8">
-    <title>OBS Alert Banner - {escape(slot)}</title>
+    <title>OBS Alert Banner</title>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         html, body {{
@@ -382,7 +386,7 @@ def handle_banner_overlay(params):
 
         async function pollAlerts() {{
             try {{
-                const res = await fetch('/obs/banner_display?api=1&name={qslot}');
+                const res = await fetch('/obs/banner_display?api=1');
                 if (!res.ok) return;
                 const d = await res.json();
 
@@ -425,13 +429,12 @@ def handle_banner_overlay(params):
     </div>
 </body>
 </html>"""
-        return html_response(html)
+        return html_response(html, with_rapid_log=False)
 
-    # Stage 2: Pick Channel / Slot
-    if theme_key in OVERLAY_THEMES and slot:
-        qslot = quote(slot)
+    # Stage 2: Standard/Compact OBS HUD Overlay
+    if theme_key in OVERLAY_THEMES:
         html = render_obs_overlay(
-            title=f"Banner - {slot}",
+            title="Alerts Banner",
             theme_key=theme_key,
             custom_css="""
             .obs-root { justify-content: flex-start; padding: 0 20px; transition: opacity 0.3s; }
@@ -441,7 +444,7 @@ def handle_banner_overlay(params):
             <div class="obs-val text-lg truncate" id="b-title"></div>
             <div class="obs-label text-sm truncate ml-3" id="b-text"></div>
         """,
-            poll_endpoint=f"/obs/banner_display?api=1&name={qslot}",
+            poll_endpoint="/obs/banner_display?api=1",
             poll_js="""
             const root = document.getElementById('obs-container');
             if (!data.has_item) { root.classList.add('hidden-alert'); return; }
@@ -450,39 +453,35 @@ def handle_banner_overlay(params):
             document.getElementById('b-text').innerText = data.text || '';
         """,
         )
-        return html_response(html)
+        return html_response(html, with_rapid_log=False)
 
     # Stage 1: Pick Theme
     return html_response(render_theme_picker(
         base_route="/obs/banner_display",
-        title="Select Received Banner Overlay Theme",
+        title="Select Banner Overlay Theme",
         accent_color="cyan"
-    ))
+    ), with_rapid_log=False)
 
 
 def handle_chat_event(event_type: str, data: dict):
     if event_type == "raid":
         receive_banner_alert(
-            "Alerts",
             f"Raid: {data['user']}!",
             f"Brought an army of {data['viewers']} viewers!",
             duration=10
         )
     elif event_type == "bits":
         receive_banner_alert(
-            "Alerts",
             f"{data['user']} cheered {data['amount']} bits!",
             data.get("message", "Thanks for the support!"),
             duration=7
         )
     elif event_type == "sub":
         receive_banner_alert(
-            "Alerts",
             f"{data['user']} subscribed!",
             f"Joined the hype train ({data['months']} months)!",
             duration=7
         )
-
 
 
 ROUTES = {

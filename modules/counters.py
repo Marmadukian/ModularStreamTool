@@ -8,7 +8,7 @@ from utils import (
 )
 
 MODULE_ID = "counters"
-MODULE_NAME = "Counters & Announcements"
+MODULE_NAME = "Counters"
 
 COUNTERS_FILE = get_data_path("counters_store.json")
 MESSAGES_FILE = get_data_path("messages_store.json")
