@@ -3,5 +3,6 @@
     "timers",
     "messages",
     "counters",
+    "urge_surf",
   ]
 }

@@ -4,7 +4,7 @@ import threading
 import time
 from utils import read_json, get_data_path
 
-CONFIG_FILE = get_data_path("config.json")
+TWITCH_CONFIG_FILE = get_data_path("twitch_config.json")
 
 
 def parse_irc_line(raw: str):
@@ -46,7 +46,7 @@ class TwitchListener:
         self.get_active_modules = get_active_modules_fn
 
     def _connect(self):
-        cfg = read_json(CONFIG_FILE, {})
+        cfg = read_json(TWITCH_CONFIG_FILE, {})
         username = cfg.get("bot_username", "").lower()
         oauth = cfg.get("oauth_token", "")
         channel = cfg.get("channel_name", "").lower().lstrip("#")
