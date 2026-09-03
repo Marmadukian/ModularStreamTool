@@ -5,6 +5,6 @@
     "counters",
     "task_tinder",
     "rapid_log",
-    "vault_manager"
+    "vault_manager",
   ]
 }
