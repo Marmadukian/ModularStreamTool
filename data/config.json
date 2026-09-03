@@ -1,0 +1,9 @@
+{
+  "active_modules": [
+    "timers",
+    "messages",
+    "counters",
+    "chat", 
+    "banners"
+  ]
+}
