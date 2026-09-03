@@ -217,6 +217,11 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 /.idea
-/data
-config.json
+twitch_config.json
 /Vault
+
+# ignore data BUT leave the config
+/data
+!data/
+data/*
+!data/config.json

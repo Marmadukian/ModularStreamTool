@@ -1,0 +1,7 @@
+{
+  "active_modules": [
+    "timers",
+    "messages",
+    "counters",
+  ]
+}
