@@ -6,5 +6,7 @@
     "task_tinder",
     "rapid_log",
     "vault_manager",
+    "chat", 
+    "banners",
   ]
 }
