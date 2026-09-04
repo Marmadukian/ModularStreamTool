@@ -1,15 +1,11 @@
 {
   "active_modules": [
-    "timers",
     "messages",
-    "counters",
-    "task_tinder",
-    "rapid_log",
-    "vault_manager",
-    "chat", 
-    "banners",
-    "beatsaber",
     "urge_surf",
-    "percent_sober"
+    "chat",
+    "counters",
+    "vault_manager",
+    "beatsaber",
+    "banners"
   ]
 }
