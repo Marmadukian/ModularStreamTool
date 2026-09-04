@@ -225,3 +225,4 @@ twitch_config.json
 !data/
 data/*
 !data/config.json
+code_examples.py
